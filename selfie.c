@@ -11840,7 +11840,6 @@ uint64_t handle_exception(uint64_t* context) {
 uint64_t mipster(uint64_t* to_context) {
   uint64_t timeout;
   uint64_t* from_context;
-
   timeout = TIMESLICE;
 
   while (1) {
@@ -11855,7 +11854,14 @@ uint64_t mipster(uint64_t* to_context) {
       return get_exit_code(from_context);
     else {
       // TODO: scheduler should go here
-      to_context = from_context;
+      to_context = from_context; 
+      //to_context = get_next_context(from_context);
+      
+      if (get_next_context(to_context) == (uint64_t*) 0)
+        to_context = used_contexts;
+      else
+        to_context = get_next_context(to_context);
+      //printf("switching to context %s\n", get_name(to_context));
 
       timeout = TIMESLICE;
     }
@@ -11872,7 +11878,13 @@ uint64_t hypster(uint64_t* to_context) {
       return get_exit_code(from_context);
     else
       // TODO: scheduler should go here
-      to_context = from_context;
+        //to_context = from_context;
+
+        if(get_next_context(from_context) == (uint64_t*) 0)
+          to_context = used_contexts;
+        else
+          to_context = get_next_context(from_context);
+      
   }
 }
 
@@ -12090,6 +12102,128 @@ uint64_t selfie_run(uint64_t machine) {
   return exit_code;
 }
 
+uint64_t selfie_run_mipsterOS(uint64_t machine){
+
+  uint64_t exit_code;
+  uint64_t argumento;
+
+  // para el primer contexto
+  uint64_t* first_context;
+
+  if (code_size == 0) {
+    printf("%s: nothing to run, debug, or host\n", selfie_name);
+
+    return EXITCODE_BADARGUMENTS;
+  } else if (machine == HYPSTER) {
+    if (OS != SELFIE) {
+      printf("%s: hypster only runs on mipster\n", selfie_name);
+
+      return EXITCODE_BADARGUMENTS;
+    }
+  } else if (machine == DIPSTER) {
+    debug          = 1;
+    debug_syscalls = 1;
+
+    machine = MIPSTER;
+  } else if (machine == RIPSTER) {
+    init_replay_engine();
+
+    debug  = 1;
+    record = 1;
+
+    machine = MIPSTER;
+  } else if (machine == CAPSTER) {
+    init_all_caches();
+
+    L1_CACHE_ENABLED = 1;
+
+    machine = MIPSTER;
+  }
+
+  argumento = atoi(peek_argument(0));
+
+  reset_interpreter();
+  reset_profiler();
+  reset_microkernel();
+
+  init_memory(64);
+
+  
+  first_context = create_context(MY_CONTEXT, 0);
+  boot_loader(first_context);
+  argumento = argumento - 1;
+
+  while(argumento){
+    current_context = create_context(MY_CONTEXT, 0);
+    boot_loader(current_context);
+  
+    argumento = argumento - 1;
+  }
+
+    set_prev_context(current_context, first_context);
+
+    run=1;
+    printf("%s: %lu-bit %s executing %lu-bit RISC-U binary %s with %luMB physical memory", selfie_name,
+    SIZEOFUINT64INBITS,
+    (char*) *(MACHINES + machine),
+    WORDSIZEINBITS,
+    binary_name,
+    PHYSICALMEMORYSIZE / MEGABYTE);
+
+  if (GC_ON) {
+    gc_init(current_context);
+
+    printf(", gcing every %lu mallocs, ", GC_PERIOD);
+    if (GC_REUSE) printf("reusing memory"); else printf("not reusing memory");
+  }
+
+  if (debug) {
+    if (record)
+      printf(", and replay");
+    else
+      printf(", and debugger");
+  }
+
+  printf("\n%s: >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n", selfie_name);
+
+  if (machine == MIPSTER)
+    exit_code = mipster(current_context);
+  else if (machine == HYPSTER)
+    exit_code = hypster(current_context);
+  else if (machine == MINSTER)
+    exit_code = minster(current_context);
+  else if (machine == MOBSTER)
+    exit_code = mobster(current_context);
+  else if (machine == MIXTER)
+    // change 0 to anywhere between 0% to 100% mipster over hypster
+    exit_code = mixter(current_context, 0);
+  else
+    exit_code = 0;
+
+  printf("\n%s: <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n", selfie_name);
+
+  printf("%s: %lu-bit %s terminating %lu-bit RISC-U binary %s with exit code %ld\n", selfie_name,
+    SIZEOFUINT64INBITS,
+    (char*) *(MACHINES + machine),
+    WORDSIZEINBITS,
+    binary_name,
+    sign_extend(exit_code, SYSCALL_BITWIDTH));
+
+  print_profile();
+
+  run = 0;
+
+  record = 0;
+
+  debug_syscalls = 0;
+  debug          = 0;
+
+  printf("%s: ################################################################################\n", selfie_name);
+
+  return exit_code;
+
+} 
+
 // -----------------------------------------------------------------
 // ------------------- CONSOLE ARGUMENT SCANNER --------------------
 // -----------------------------------------------------------------
@@ -12197,6 +12331,11 @@ uint64_t selfie(uint64_t extras) {
           return selfie_run(MOBSTER);
         else if (string_compare(argument, "-L1"))
           return selfie_run(CAPSTER);
+        else if (string_compare(argument, "-x"))
+          return selfie_run_mipsterOS(MIPSTER);
+        else if (string_compare(argument, "-z")) 
+          return selfie_run_mipsterOS(HYPSTER); 
+  
         else
           return EXITCODE_BADARGUMENTS;
       } else
